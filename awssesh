@@ -1,0 +1,116 @@
+#!/bin/bash
+
+Ending() {
+    echo
+    echo "Exiting the session."
+    exit 0
+}
+
+trap Ending SIGTERM SIGINT
+
+Help()
+{
+   # Display Help
+   echo
+   echo "A simple interactive CLI utility to work with AWS session manager."
+   echo
+   echo "Syntax: awssesh [-p aws profile name] [-i instance tag]"
+   echo "options:"
+   echo "i      [optional] The EC2 instance tag key to look for."
+   echo "p      [optional] The AWS profile to use. This must be configured."
+   echo
+   exit 1
+}
+
+while getopts f:s:u:h flag
+do
+    case "${flag}" in
+        i) INSTANCE_TAG=${OPTARG};;
+        p) AWS_PROFILE=${OPTARG};;
+        h) # display Help
+          Help
+          exit 1;;
+        *) Help;;
+    esac
+done
+
+if [ -z $AWS_PROFILE ];
+then
+    echo "Please input the AWS profile to use:"
+    read AWS_PROFILE
+fi
+
+if [ -z "${INSTANCE_TAG}" ];
+then
+    echo "Please input an AWS EC2 instance tag to search for:"
+    read INSTANCE_TAG
+fi
+
+# check authentication
+check_auth=$(aws --profile $AWS_PROFILE sts get-caller-identity 2>&1)
+
+exit_status=$?
+
+check_auth=${check_auth//$'\n'/}
+
+if [[ $check_auth == *"The SSO session associated with this profile has expired or is otherwise invalid"* ]];
+then
+    echo "ERROR: $check_auth"
+    echo "Attempting to refresh the AWS SSO token."
+    aws --profile $AWS_PROFILE sso login
+elif [ $exit_status != 0 ]; then
+    echo "ERROR: Please check or configure AWS authentication"
+    echo "ERROR: $check_auth"
+    exit 1
+fi
+
+each_instance=`aws --profile $AWS_PROFILE --region eu-west-1 ec2 describe-instances --output json --filters "Name=instance-state-name,Values=running" | jq -r '[.Reservations[].Instances[] | select(.Tags[].Value | ascii_downcase | contains("'"$INSTANCE_TAG"'"))]'` # | [{"id": .[].InstanceId}]'`
+
+each_instance_parsed=$(echo "$each_instance" | jq -r '[.[] | reduce .Tags[] as $t ({ InstanceId }; .[$t.Key] = $t.Value) | {"id": (.InstanceId), "name": (.Name)}]')
+
+echo
+instance_ids=`echo $each_instance_parsed | jq -r '.[].id'`
+instance_names=`echo $each_instance_parsed | jq -r '.[] | @json | @sh'`
+
+
+if [ -z "$instance_names" ];
+then
+    echo "Sorry! No instances found in the account matching a tag like $INSTANCE_TAG. Please try again"
+    exit 1
+fi
+
+options=($instance_names)
+
+instance_ssh () {
+
+    fixed_json=${1//\'/}
+    target_instance=`echo $fixed_json | jq -r '.id'`
+    echo $1
+    echo $target_instance
+
+    echo "Do Not close the session or connectivity will be lost!"
+
+    aws ssm start-session --target $target_instance --profile $AWS_PROFILE
+
+}
+
+if [ ${#options[@]} == 1 ];
+then
+    opt=${options[0]}
+    echo "Found 1 instance matching $opt"
+    instance_ssh $opt "$instances"
+    exit 1
+else
+    PS3='Please enter your choice: '
+    select opt in "${options[@]}"
+    do
+    case $opt in
+        "Exit")
+        echo "Exiting..."
+        break;;
+    esac
+
+    instance_ssh $opt "$instances"
+    exit 1
+    done
+fi
