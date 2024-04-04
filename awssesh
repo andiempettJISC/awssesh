@@ -36,8 +36,21 @@ done
 
 if [ -z $AWS_PROFILE ];
 then
-    echo "Please input the AWS profile to use:"
-    read AWS_PROFILE
+
+    profile_options=(`aws configure list-profiles`)
+
+        PS3='Please select the AWS profile to use: '
+        select pros in "${profile_options[@]}"
+        do
+        case $pros in
+            "Exit")
+            echo "Exiting..."
+            break;;
+        esac
+        break
+        done
+    clear;
+    AWS_PROFILE=$pros
 fi
 
 if [ -z "${INSTANCE_TAG}" ];
