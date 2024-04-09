@@ -22,7 +22,7 @@ Help()
    exit 1
 }
 
-while getopts f:s:u:h flag
+while getopts p:i:h flag
 do
     case "${flag}" in
         i) INSTANCE_TAG=${OPTARG};;
